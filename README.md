@@ -1,9 +1,9 @@
-# AutoResearch Chess Lab
+# FrameWork Chess Lab
 
-AutoResearch Chess Lab is a local-first framework for comparing two LLM research-allocation strategies under the same token budget.
+FrameWork is a local-first system for comparing two LLM research-allocation strategies under the same token budget.
 
 - **Single-Best:** pick one candidate upfront, then spend the full token budget improving it.
-- **AutoResearch:** explore multiple candidates cheaply, evaluate, prune, and reallocate budget to survivors.
+- **FrameWork:** explore multiple candidates cheaply, evaluate, prune, and reallocate budget to survivors.
 
 The toy domain is chess engine development. The goal is not a world-class chess engine; it is an auditable loop for comparing research strategy choices.
 
