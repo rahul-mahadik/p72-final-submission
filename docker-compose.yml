@@ -1,0 +1,49 @@
+services:
+  backend:
+    build: .
+    command: uvicorn backend.app:app --host 0.0.0.0 --port 8000
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/data/artifacts
+      - ./experiments:/data/experiments
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker-a:
+    build: .
+    command: sh -c 'python3 -m agents.pod_worker --experiment-id "$$EXPERIMENT_ID" --pod-id child-a --api-key-id key-2'
+    profiles: ["workers"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/data/artifacts
+      - ./experiments:/data/experiments
+
+  worker-b:
+    build: .
+    command: sh -c 'python3 -m agents.pod_worker --experiment-id "$$EXPERIMENT_ID" --pod-id child-b --api-key-id key-3'
+    profiles: ["workers"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/data/artifacts
+      - ./experiments:/data/experiments

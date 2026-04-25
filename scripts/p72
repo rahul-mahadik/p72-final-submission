@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+BACKEND_PORT="${BACKEND_PORT:-8001}"
+BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
+LOG_DIR="${LOG_DIR:-.run}"
+mkdir -p "$LOG_DIR"
+
+python_bin() {
+  if [[ -x ".venv/bin/python" ]]; then
+    echo ".venv/bin/python"
+  else
+    echo "python3"
+  fi
+}
+
+usage() {
+  cat <<EOF
+Usage: scripts/p72 <command>
+
+Commands:
+  install        Create .venv and install requirements
+  test           Run pytest
+  ui            Start backend and print API/dashboard URLs
+  live          Start backend if needed, then run live Anthropic experiment
+  live-ui       Start backend, print dashboard URL, then run live experiment
+  live-hitl     Start backend if needed, then run live experiment with approval prompts
+  live-hitl-ui  Start backend, print dashboard URL, then run live HITL experiment
+  doctor-live   Check Anthropic key/model access for live mode
+  clean         Remove generated artifacts/experiments/logs
+  stop          Stop background backend started by 'ui'
+  status        Show backend status
+
+Environment:
+  ANTHROPIC_API_KEY=sk-ant-...      required for live/live-hitl
+  BACKEND_PORT=8001                 default avoids common :8000 conflicts
+  TOKEN_BUDGET=40000
+  AUTORESEARCH_ITERATIONS=1
+  DEV_GAMES_PER_POSITION=1
+  HELDOUT_GAMES_PER_POSITION=2
+  DEV_MOVE_BUDGET_MS=100
+  HELDOUT_MOVE_BUDGET_MS=200
+EOF
+}
+
+ensure_venv() {
+  if [[ ! -x ".venv/bin/python" ]]; then
+    python3 -m venv .venv
+  fi
+}
+
+pid_alive() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] || return 1
+  local pid
+  pid="$(cat "$pid_file")"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start_backend() {
+  if pid_alive "$LOG_DIR/backend.pid"; then
+    echo "Backend already running on ${BACKEND_URL} (pid $(cat "$LOG_DIR/backend.pid"))"
+    return
+  fi
+  local py
+  py="$(python_bin)"
+  nohup "$py" -m uvicorn backend.app:app --host 127.0.0.1 --port "$BACKEND_PORT" \
+    >"$LOG_DIR/backend.log" 2>&1 &
+  echo $! > "$LOG_DIR/backend.pid"
+  echo "Backend starting on ${BACKEND_URL} (pid $(cat "$LOG_DIR/backend.pid"))"
+}
+
+wait_for_backend() {
+  for _ in $(seq 1 40); do
+    if curl -fsS "${BACKEND_URL}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Backend did not become healthy. See ${LOG_DIR}/backend.log" >&2
+  return 1
+}
+
+preflight_live_auth() {
+  if [[ -z "${ANTHROPIC_API_KEY:-}${PARENT_ANTHROPIC_API_KEY:-}" ]]; then
+    echo "Set ANTHROPIC_API_KEY or PARENT_ANTHROPIC_API_KEY before running live." >&2
+    exit 2
+  fi
+  local py
+  py="$(python_bin)"
+  "$py" - <<'PY'
+import os
+import sys
+
+from anthropic import Anthropic
+
+key = os.getenv("PARENT_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+model = os.getenv(
+    "ANTHROPIC_PARENT_MODEL",
+    os.getenv("ANTHROPIC_STRONG_MODEL", "claude-opus-4-1-20250805"),
+)
+
+try:
+    Anthropic(api_key=key).messages.create(
+        model=model,
+        max_tokens=1,
+        messages=[{"role": "user", "content": "Reply OK."}],
+    )
+except Exception as exc:
+    status = getattr(exc, "status_code", None)
+    message = str(exc)
+    if status == 401 or "invalid x-api-key" in message.lower():
+        print(
+            "Anthropic live preflight failed: invalid API key. "
+            "Re-export a current ANTHROPIC_API_KEY or PARENT_ANTHROPIC_API_KEY.",
+            file=sys.stderr,
+        )
+        sys.exit(11)
+    if status in {400, 404} and "model" in message.lower():
+        print(
+            f"Anthropic live preflight failed: model '{model}' is not available "
+            "to this key/account. Set ANTHROPIC_PARENT_MODEL or "
+            "ANTHROPIC_STRONG_MODEL to an allowed model id.",
+            file=sys.stderr,
+        )
+        sys.exit(12)
+    print(f"Anthropic live preflight failed: {exc}", file=sys.stderr)
+    sys.exit(13)
+
+print(f"Anthropic live preflight OK using parent model: {model}")
+PY
+}
+
+run_live() {
+  local hitl="${1:-false}"
+  local preflight="${2:-true}"
+  if [[ "$preflight" == "true" ]]; then
+    preflight_live_auth
+  fi
+  if ! curl -fsS "${BACKEND_URL}/health" >/dev/null 2>&1; then
+    start_backend
+  fi
+  wait_for_backend
+  local py args
+  py="$(python_bin)"
+  args=(
+    -m agents.orchestrator
+    --backend-url "$BACKEND_URL"
+    --live-logical-pods
+    --token-budget "${TOKEN_BUDGET:-40000}"
+    --autoresearch-iterations "${AUTORESEARCH_ITERATIONS:-1}"
+    --dev-games-per-position "${DEV_GAMES_PER_POSITION:-1}"
+    --heldout-games-per-position "${HELDOUT_GAMES_PER_POSITION:-2}"
+    --dev-move-budget-ms "${DEV_MOVE_BUDGET_MS:-100}"
+    --heldout-move-budget-ms "${HELDOUT_MOVE_BUDGET_MS:-200}"
+  )
+  if [[ "$hitl" == "true" ]]; then
+    args+=(--human-in-loop)
+  fi
+  MOCK_MODE=false "$py" "${args[@]}"
+}
+
+stop_pid() {
+  local pid_file="$1"
+  local name="$2"
+  if pid_alive "$pid_file"; then
+    local pid
+    pid="$(cat "$pid_file")"
+    kill "$pid" 2>/dev/null || true
+    echo "Stopped ${name} (pid ${pid})"
+  fi
+  rm -f "$pid_file"
+}
+
+case "${1:-}" in
+  install)
+    ensure_venv
+    .venv/bin/pip install -r requirements.txt
+    ;;
+  test)
+    "$(python_bin)" -m pytest
+    ;;
+  ui)
+    start_backend
+    wait_for_backend
+    echo
+    echo "Dashboard: ${BACKEND_URL}/dashboard"
+    echo "API docs:   ${BACKEND_URL}/docs"
+    echo "Logs:       ${LOG_DIR}/backend.log"
+    ;;
+  live)
+    run_live false
+    ;;
+  live-ui)
+    preflight_live_auth
+    start_backend
+    wait_for_backend
+    echo "Dashboard: ${BACKEND_URL}/dashboard"
+    run_live false false
+    ;;
+  live-hitl)
+    run_live true
+    ;;
+  live-hitl-ui)
+    preflight_live_auth
+    start_backend
+    wait_for_backend
+    echo "Dashboard: ${BACKEND_URL}/dashboard"
+    run_live true false
+    ;;
+  doctor-live)
+    preflight_live_auth
+    ;;
+  clean)
+    find artifacts -mindepth 1 ! -name '.gitkeep' -exec rm -rf {} +
+    find experiments -mindepth 1 ! -name '.gitkeep' -exec rm -rf {} +
+    rm -rf "$LOG_DIR"
+    touch artifacts/.gitkeep experiments/.gitkeep
+    echo "Cleaned runtime artifacts, experiments, and ${LOG_DIR}."
+    ;;
+  stop)
+    stop_pid "$LOG_DIR/backend.pid" backend
+    ;;
+  status)
+    if pid_alive "$LOG_DIR/backend.pid"; then
+      echo "Backend running: pid $(cat "$LOG_DIR/backend.pid"), ${BACKEND_URL}"
+    else
+      echo "Backend not running"
+    fi
+    echo "Dashboard URL: ${BACKEND_URL}/dashboard"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
