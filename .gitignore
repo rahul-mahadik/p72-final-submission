@@ -3,6 +3,9 @@ __pycache__/
 .pytest_cache/
 .run/
 *.pyc
+*.pyo
+.DS_Store
+*.egg-info/
 
 artifacts/*
 !artifacts/.gitkeep
