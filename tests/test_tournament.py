@@ -10,6 +10,20 @@ def test_evaluate_engine_writes_summary(tmp_path) -> None:
     assert summary["artifact_files"]
 
 
+def test_evaluate_engine_supports_nnue_baseline_kind(tmp_path) -> None:
+    summary = evaluate_engine(
+        "alphabeta",
+        baseline_kind="nnue_lite",
+        move_budget_ms=20,
+        games_per_position=1,
+        output_dir=tmp_path,
+    )
+    assert summary["baseline_kind"] == "nnue_lite"
+    assert summary["reference_engine"] == "nnue_lite_value"
+    assert summary["games"] == 4
+    assert summary["artifact_files"]
+
+
 def test_head_to_head_writes_summary(tmp_path) -> None:
     summary = head_to_head(
         "alphabeta",

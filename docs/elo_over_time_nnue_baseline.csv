@@ -1,0 +1,4 @@
+checkpoint,move_budget_ms,candidate,baseline,games,score_vs_baseline,elo_delta_vs_baseline,estimated_candidate_elo,reference_baseline_elo,illegal_moves,crashes,avg_move_latency_ms,artifact_json,artifact_pgn
+1,20,alphabeta,nnue_lite,4,0.5,-0.0,1000.0,1000,0,0,18.39,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141700.json,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141700.pgn
+2,50,alphabeta,nnue_lite,4,0.375,-88.7,911.3,1000,0,0,50.1,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141709.json,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141709.pgn
+3,100,alphabeta,nnue_lite,4,0.375,-88.7,911.3,1000,0,0,98.05,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141720.json,artifacts/elo_over_time/alphabeta_vs_nnue_lite_dev_1777141720.pgn

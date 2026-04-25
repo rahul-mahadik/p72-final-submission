@@ -40,6 +40,21 @@ This runs the complete comparison:
 
 Mock mode still runs real local chess evaluations. Only LLM planning, development, test-summary, and final-summary text is mocked by `MockLLMAdapter`.
 
+## Redo Elo Over Time Against NNUE
+
+```bash
+python3 scripts/elo_over_time.py
+```
+
+The default curve compares `alphabeta` against `nnue_lite`, treating NNUE-lite as Elo 1000 at each checkpoint. Checkpoints are increasing per-move search budgets, and outputs are written to:
+
+```text
+docs/ELO_OVER_TIME_NNUE_BASELINE.md
+docs/elo_over_time_nnue_baseline.csv
+```
+
+The underlying JSON and PGN evaluation artifacts are generated under `artifacts/elo_over_time/` and remain ignored by git.
+
 ## Run Anthropic Live Logical Pods
 
 ```bash

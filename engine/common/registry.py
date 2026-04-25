@@ -7,14 +7,18 @@ from engine.candidates.nnue_lite.engine import NNUELiteEngine
 from engine.candidates.policy_guided.engine import PolicyGuidedEngine
 
 
+ENGINE_FACTORIES = {
+    "alphabeta": AlphaBetaEngine,
+    "mcts": MCTSEngine,
+    "nnue_lite": NNUELiteEngine,
+    "policy_guided": PolicyGuidedEngine,
+}
+
+ENGINE_KINDS = tuple(ENGINE_FACTORIES)
+
+
 def create_engine(kind: str):
     """Instantiate one of the supported candidate engine families."""
-    engines = {
-        "alphabeta": AlphaBetaEngine,
-        "mcts": MCTSEngine,
-        "nnue_lite": NNUELiteEngine,
-        "policy_guided": PolicyGuidedEngine,
-    }
-    if kind not in engines:
+    if kind not in ENGINE_FACTORIES:
         raise KeyError(f"Unknown engine kind: {kind}")
-    return engines[kind]()
+    return ENGINE_FACTORIES[kind]()

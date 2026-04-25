@@ -1,7 +1,7 @@
 """Chess evaluation harness for candidate engines.
 
 The harness uses python-chess for legal move validation and PGN generation.
-It evaluates candidates from fixed FEN positions against a random baseline,
+It evaluates candidates from fixed FEN positions against a configurable baseline,
 records illegal moves/crashes/latency, and writes auditable JSON + PGN files.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import chess.pgn
 
 from backend.config import artifacts_root
 from engine.common.baseline import RandomBaseline
-from engine.common.registry import create_engine
+from engine.common.registry import ENGINE_KINDS, create_engine
 from tournament.elo import approximate_elo_delta
 from tournament.logging_utils import append_jsonl
 from tournament.positions import load_positions
@@ -112,20 +112,36 @@ def _baseline_pairings(engine, baseline, games_per_position: int) -> list[tuple[
     return pairings
 
 
-def evaluate_engine(kind: str, positions_path: str | None = None, heldout: bool = False, move_budget_ms: int = 200, games_per_position: int = 2, output_dir: str | Path | None = None) -> dict:
-    """Evaluate one engine kind against the random baseline."""
+def create_baseline_engine(baseline_kind: str):
+    """Create the configured baseline engine for relative Elo estimates."""
+    if baseline_kind == "random":
+        return RandomBaseline()
+    return create_engine(baseline_kind)
+
+
+def evaluate_engine(
+    kind: str,
+    positions_path: str | None = None,
+    heldout: bool = False,
+    move_budget_ms: int = 200,
+    games_per_position: int = 2,
+    output_dir: str | Path | None = None,
+    baseline_kind: str = "random",
+) -> dict:
+    """Evaluate one engine kind against a configurable baseline."""
     append_jsonl(
         "logs/eval_runs.jsonl",
         {
             "event": "eval_started",
             "kind": kind,
+            "baseline_kind": baseline_kind,
             "heldout": heldout,
             "move_budget_ms": move_budget_ms,
             "games_per_position": games_per_position,
         },
     )
     engine = create_engine(kind)
-    baseline = RandomBaseline()
+    baseline = create_baseline_engine(baseline_kind)
     positions = load_positions(positions_path, heldout=heldout)
     games: list[GameResult] = []
     pgns: list[str] = []
@@ -139,6 +155,7 @@ def evaluate_engine(kind: str, positions_path: str | None = None, heldout: bool 
                 {
                     "event": "game_completed",
                     "kind": kind,
+                    "baseline_kind": baseline_kind,
                     "white": result.white,
                     "black": result.black,
                     "result": result.result,
@@ -154,12 +171,15 @@ def evaluate_engine(kind: str, positions_path: str | None = None, heldout: bool 
     summary = {
         "engine": engine.name,
         "kind": kind,
+        "baseline_kind": baseline_kind,
+        "baseline_engine": baseline.name,
         "heldout": heldout,
         "games": len(games),
         "win_rate": win_rate,
         "elo_delta": approximate_elo_delta(win_rate),
         "reference_elo": 1000,
         "estimated_elo": 1000 + approximate_elo_delta(win_rate),
+        "reference_engine": baseline.name,
         "illegal_moves": sum(g.illegal_moves for g in games),
         "crashes": sum(g.crashes for g in games),
         "avg_move_latency_ms": sum(g.avg_move_latency_ms for g in games) / len(games) if games else 0.0,
@@ -167,7 +187,7 @@ def evaluate_engine(kind: str, positions_path: str | None = None, heldout: bool 
     }
     out = Path(output_dir) if output_dir else artifacts_root() / "evals"
     out.mkdir(parents=True, exist_ok=True)
-    stem = f"{kind}_{'heldout' if heldout else 'dev'}_{int(time.time())}"
+    stem = f"{kind}_vs_{baseline_kind}_{'heldout' if heldout else 'dev'}_{int(time.time())}"
     (out / f"{stem}.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (out / f"{stem}.pgn").write_text("\n\n".join(pgns), encoding="utf-8")
     summary["artifact_files"] = [str(out / f"{stem}.json"), str(out / f"{stem}.pgn")]
@@ -176,6 +196,7 @@ def evaluate_engine(kind: str, positions_path: str | None = None, heldout: bool 
         {
             "event": "eval_completed",
             "kind": kind,
+            "baseline_kind": baseline_kind,
             "heldout": heldout,
             "games": summary["games"],
             "win_rate": summary["win_rate"],
@@ -308,8 +329,21 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=["alphabeta", "mcts", "nnue_lite", "policy_guided"])
+    parser.add_argument("kind", choices=ENGINE_KINDS)
+    parser.add_argument("--baseline-kind", choices=("random", *ENGINE_KINDS), default="random")
     parser.add_argument("--heldout", action="store_true")
     parser.add_argument("--move-budget-ms", type=int, default=200)
+    parser.add_argument("--games-per-position", type=int, default=2)
     args = parser.parse_args()
-    print(json.dumps(evaluate_engine(args.kind, heldout=args.heldout, move_budget_ms=args.move_budget_ms), indent=2))
+    print(
+        json.dumps(
+            evaluate_engine(
+                args.kind,
+                baseline_kind=args.baseline_kind,
+                heldout=args.heldout,
+                move_budget_ms=args.move_budget_ms,
+                games_per_position=args.games_per_position,
+            ),
+            indent=2,
+        )
+    )

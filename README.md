@@ -47,6 +47,14 @@ Run the full offline comparison:
 python3 -m agents.orchestrator --backend-url http://127.0.0.1:8001 --full-mock
 ```
 
+Generate the Elo-over-time report with NNUE-lite as the comparison engine:
+
+```bash
+python3 scripts/elo_over_time.py
+```
+
+The report is written to `docs/ELO_OVER_TIME_NNUE_BASELINE.md`, with CSV data in `docs/elo_over_time_nnue_baseline.csv`.
+
 Run live with one Anthropic key shared by logical parent/child pods:
 
 ```bash
